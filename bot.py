@@ -266,18 +266,17 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     chat_id = chat.id
     text = (message.text or message.caption or "").strip()
 
-    # Case A: Telegram Channel post automatically forwarded into discussion group
-    is_channel_post = (
-        getattr(message, "is_automatic_forward", False) or
-        (message.sender_chat and message.sender_chat.type == "channel") or
-        getattr(message, "forward_from_chat", None) is not None
-    )
+    bot_user = context.bot
+    bot_username = (bot_user.username or "").lower()
+    is_mentioned = bool(bot_username and f"@{bot_username}" in text.lower())
 
-    if is_channel_post:
-        # Cache this post's text under its message_id (which is thread_id for all comments under it!)
-        post_content = text
-        channel_posts_cache[(chat_id, message.message_id)] = post_content
-        logger.info(f"Cached channel broadcast post [{message.message_id}] in chat [{chat_id}]: {post_content[:60]}...")
+    # Only treat as an automatic channel broadcast post if it is an actual system forward and does NOT mention the bot
+    is_auto_broadcast = getattr(message, "is_automatic_forward", False) and not is_mentioned
+
+    if is_auto_broadcast:
+        # Cache this root post's text under its message_id (which is thread_id for all comments under it)
+        channel_posts_cache[(chat_id, message.message_id)] = text
+        logger.info(f"Cached channel broadcast post [{message.message_id}] in chat [{chat_id}]: {text[:60]}...")
         return  # Do not reply to the channel post itself
 
     # Ignore other bots
@@ -286,8 +285,14 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     is_group = chat.type in ("group", "supergroup")
 
+    sender_desc = "Unknown"
+    if message.from_user:
+        sender_desc = f"@{message.from_user.username or message.from_user.first_name}"
+    elif message.sender_chat:
+        sender_desc = f"Channel/Admin [{message.sender_chat.title or message.sender_chat.id}]"
+
     if is_group:
-        logger.info(f"Incoming group message in [{chat.title or chat_id}] from @{message.from_user.username or message.from_user.first_name}: {text[:80]}")
+        logger.info(f"Incoming group message in [{chat.title or chat_id}] from {sender_desc}: {text[:80]}")
 
     # In 1-on-1 private chat: ALWAYS respond
     if not is_group:
@@ -296,14 +301,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # In Discussion Group:
-    bot_user = context.bot
-    bot_username = (bot_user.username or "").lower()
-    
-    # Check if user mentioned the bot: @BotUsername
-    is_mentioned = False
-    if bot_username and f"@{bot_username}" in text.lower():
-        is_mentioned = True
-        # Strip mention from text
+    # Strip bot mention from text if present
+    if is_mentioned:
         text = re.sub(rf"@{re.escape(bot_username)}", "", text, flags=re.IGNORECASE).strip()
 
     # Check if user replied directly to one of the bot's past messages
