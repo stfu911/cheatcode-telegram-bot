@@ -37,7 +37,7 @@ channel_posts_cache: Dict[Tuple[int, int], str] = {}
 TROUBLESHOOT_KEYWORDS = (
     r"\b(crash|crashing|crashes|freeze|freezes|hang|hangs|stuck|black screen)\b|"
     r"\b(not working|doesnt work|doesn't work|wont work|won't work|cant open|can't open|wont open|won't open)\b|"
-    r"\b(how to install|where to put|how to fix|how to bypass|how to run)\b|"
+    r"\b(how to install|where to put|how to fix|how to bypass|how to run|how to use)\b|"
     r"\b(apk|apks|obb|rom|iso|pkg|fpkg|zip|extract|sai|split)\b|"
     r"\b(lag|lagging|fps|stutter|drop fps|overheat)\b|"
     r"\b(sd 855|sd855|snapdragon|adreno|mali|exynos|dimensity)\b|"
@@ -46,7 +46,7 @@ TROUBLESHOOT_KEYWORDS = (
 )
 troubleshoot_regex = re.compile(TROUBLESHOOT_KEYWORDS, re.IGNORECASE)
 
-# Short conversational phrases that must NEVER trigger the bot
+# Short conversational phrases that must NEVER trigger the bot unsummoned
 CONVERSATIONAL_NOISE = {
     "got it", "got it?", "ok", "ok?", "okay", "okay?", "why", "why?",
     "what", "what?", "how", "how?", "who", "who?", "where", "where?",
@@ -61,7 +61,7 @@ def is_user_authorized(user_id: int) -> bool:
 def is_troubleshooting_query(text: str) -> bool:
     """Check if message in discussion group looks like an actual technical issue."""
     cleaned = text.strip().lower()
-    if len(cleaned) < 12:
+    if len(cleaned) < 10:
         return False
     if cleaned in CONVERSATIONAL_NOISE:
         return False
@@ -76,23 +76,40 @@ async def send_solution(
     is_nuke: bool = False
 ):
     """Query AI, send typing action, and reply with formatted 3-part layout."""
+    message = update.effective_message
+    chat = update.effective_chat
+    if not message or not chat:
+        return
+
+    chat_id = chat.id
+    thread_id = getattr(message, "message_thread_id", None)
     user = update.effective_user
-    chat_id = update.effective_chat.id
 
     if not is_user_authorized(user.id if user else 0):
-        await update.message.reply_text("⛔ Unauthorized access. Bot is in private whitelist mode.")
+        try:
+            await message.reply_text("⛔ Unauthorized access. Bot is in private whitelist mode.")
+        except Exception:
+            pass
         return
 
     if not query.strip():
-        await update.message.reply_text(
+        fallback_msg = (
             "⚡ <b>THE CHEAT CODE:</b>\n"
             "<code>/cheat &lt;your problem or error message&gt;</code>\n\n"
             "🔍 <b>THE MECHANIC:</b>\n"
-            "Command needs an argument to generate a bypass.\n\n"
+            "Command needs an issue to generate a bypass.\n\n"
             "💣 <b>THE OVERRIDE (Plan B):</b>\n"
-            "Send any direct message without a command.",
-            parse_mode=constants.ParseMode.HTML
+            "Send any error text or tag @Stfu0911_bot with your question."
         )
+        try:
+            await message.reply_text(fallback_msg, parse_mode=constants.ParseMode.HTML)
+        except Exception:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=fallback_msg,
+                parse_mode=constants.ParseMode.HTML
+            )
         return
 
     # Assemble contextual prompt if channel post or parent comment exists
@@ -109,7 +126,7 @@ async def send_solution(
     async def keep_typing():
         while True:
             try:
-                await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
+                await context.bot.send_chat_action(chat_id=chat_id, message_thread_id=thread_id, action=constants.ChatAction.TYPING)
                 await asyncio.sleep(4.0)
             except asyncio.CancelledError:
                 break
@@ -125,17 +142,19 @@ async def send_solution(
 
     formatted_html = markdown_to_telegram_html(raw_solution)
 
+    # Safe reply with automatic thread fallback
     try:
-        await update.message.reply_text(
+        await message.reply_text(
             formatted_html,
             parse_mode=constants.ParseMode.HTML,
             disable_web_page_preview=True
         )
     except Exception as e:
-        logger.warning(f"reply_text failed ({e}), falling back to direct channel/group message.")
+        logger.warning(f"reply_text failed ({e}), falling back to direct send_message with thread_id={thread_id}")
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
+                message_thread_id=thread_id,
                 text=formatted_html,
                 parse_mode=constants.ParseMode.HTML,
                 disable_web_page_preview=True
@@ -143,25 +162,35 @@ async def send_solution(
         except Exception:
             await context.bot.send_message(
                 chat_id=chat_id,
+                message_thread_id=thread_id,
                 text=raw_solution,
                 disable_web_page_preview=True
             )
 
 # Command Handlers
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    chat = update.effective_chat
+    if not message or not chat:
+        return
+    thread_id = getattr(message, "message_thread_id", None)
+
     msg = (
         "⚡ <b>CHEAT CODE BOT READY.</b>\n\n"
         "Direct-bypass systems engineer. Zero filler. Pure terminal one-liners, registry tweaks, APK/ROM fixes, and root bypasses.\n\n"
         "<b>USAGE:</b>\n"
         "• Send any error or glitch in DMs or discussion group comments\n"
-        "• Automatically detects channel post context for games/APKs\n"
+        "• Tag <code>@Stfu0911_bot</code> or reply to any message\n"
         "• <code>/cheat &lt;issue&gt;</code> — Quick 80/20 bypass\n"
         "• <code>/nuke &lt;issue&gt;</code> — Aggressive nuclear override\n"
         "• <code>/fix &lt;issue&gt;</code> — Immediate tactical repair\n"
         "• <code>/ping</code> — Status check\n\n"
         "<i>Tap any command block on mobile to copy directly to clipboard.</i>"
     )
-    await update.message.reply_text(msg, parse_mode=constants.ParseMode.HTML)
+    try:
+        await message.reply_text(msg, parse_mode=constants.ParseMode.HTML)
+    except Exception:
+        await context.bot.send_message(chat_id=chat.id, message_thread_id=thread_id, text=msg, parse_mode=constants.ParseMode.HTML)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_command(update, context)
@@ -182,45 +211,61 @@ async def nuke_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_solution(update, context, query, channel_context=channel_ctx, parent_comment_context=parent_ctx, is_nuke=True)
 
 async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    chat = update.effective_chat
+    if not message or not chat:
+        return
+    thread_id = getattr(message, "message_thread_id", None)
+
     if not is_user_authorized(update.effective_user.id if update.effective_user else 0):
-        await update.message.reply_text("⛔ Unauthorized.")
+        await message.reply_text("⛔ Unauthorized.")
         return
 
     if not context.args:
-        await update.message.reply_text(
+        help_msg = (
             "⚡ <b>THE CHEAT CODE:</b>\n"
             "<code>/setkey &lt;your_groq_or_gemini_or_openai_api_key&gt;</code>\n\n"
             "🔍 <b>THE MECHANIC:</b>\n"
             "Automatically detects key format, hot-reloads engine, and writes to .env.\n\n"
             "💣 <b>THE OVERRIDE (Plan B):</b>\n"
-            "Get free key in 10s: https://console.groq.com/keys",
-            parse_mode=constants.ParseMode.HTML
+            "Get free key in 10s: https://console.groq.com/keys"
         )
+        try:
+            await message.reply_text(help_msg, parse_mode=constants.ParseMode.HTML)
+        except Exception:
+            await context.bot.send_message(chat_id=chat.id, message_thread_id=thread_id, text=help_msg, parse_mode=constants.ParseMode.HTML)
         return
 
     new_key = context.args[0].strip()
     ai_client.set_key(new_key)
 
     try:
-        await update.message.delete()
+        await message.delete()
     except Exception:
         pass
 
+    success_msg = (
+        "⚡ <b>THE CHEAT CODE:</b>\n"
+        f"<code>API KEY HOT-LOADED [{config.AI_PROVIDER.upper()}]</code>\n\n"
+        "🔍 <b>THE MECHANIC:</b>\n"
+        f"Inference client connected to <code>{config.AI_MODEL}</code>.\n\n"
+        "💣 <b>THE OVERRIDE (Plan B):</b>\n"
+        "Send <code>/ping</code> to verify status."
+    )
     await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=(
-            "⚡ <b>THE CHEAT CODE:</b>\n"
-            f"<code>API KEY HOT-LOADED [{config.AI_PROVIDER.upper()}]</code>\n\n"
-            "🔍 <b>THE MECHANIC:</b>\n"
-            f"Inference client connected to <code>{config.AI_MODEL}</code>.\n\n"
-            "💣 <b>THE OVERRIDE (Plan B):</b>\n"
-            "Send <code>/ping</code> to verify status."
-        ),
+        chat_id=chat.id,
+        message_thread_id=thread_id,
+        text=success_msg,
         parse_mode=constants.ParseMode.HTML
     )
 
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    key_configured = bool(config.get_api_key())
+    message = update.effective_message
+    chat = update.effective_chat
+    if not message or not chat:
+        return
+    thread_id = getattr(message, "message_thread_id", None)
+
     status_text = (
         "⚡ <b>STATUS: OPERATIONAL</b>\n"
         f"• <b>Engine:</b> <code>{config.AI_MODEL}</code>\n"
@@ -228,17 +273,20 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• <b>Failover Key Pool:</b> <code>{ai_client.get_pool_status()}</code>\n"
         f"• <b>Discussion Group Auto-Reply:</b> {'<code>ACTIVE</code>' if config.AUTO_REPLY_GROUP_QUESTIONS else '<code>MENTIONS ONLY</code>'}\n"
         f"• <b>Cached Channel Threads:</b> <code>{len(channel_posts_cache)}</code>\n"
-        "• <b>24/7 Watchdog:</b> <code>ACTIVE</code>"
+        "• <b>24/7 Cloud Host:</b> <code>RENDER (ACTIVE)</code>"
     )
-    await update.message.reply_text(status_text, parse_mode=constants.ParseMode.HTML)
+    try:
+        await message.reply_text(status_text, parse_mode=constants.ParseMode.HTML)
+    except Exception:
+        await context.bot.send_message(chat_id=chat.id, message_thread_id=thread_id, text=status_text, parse_mode=constants.ParseMode.HTML)
 
 def extract_message_contexts(update: Update) -> Tuple[str, str]:
     """Extract both the channel root post context and any replied comment context."""
-    message = update.message
+    message = update.effective_message
     if not message:
         return "", ""
 
-    chat_id = message.chat_id
+    chat_id = update.effective_chat.id if update.effective_chat else 0
     channel_context = ""
     parent_comment_context = ""
 
@@ -267,32 +315,48 @@ def extract_message_contexts(update: Update) -> Tuple[str, str]:
     return channel_context, parent_comment_context
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
+    message = update.effective_message
     if not message:
         return
 
-    chat = message.chat
+    chat = update.effective_chat
+    if not chat:
+        return
     chat_id = chat.id
     text = (message.text or message.caption or "").strip()
 
     bot_user = context.bot
     bot_username = (bot_user.username or "").lower()
+
+    # 1. String mention check
     is_mentioned = bool(bot_username and f"@{bot_username}" in text.lower())
 
-    # Only treat as an automatic channel broadcast post if it is an actual system forward and does NOT mention the bot
+    # 2. Telegram entities mention check (handles clickable mentions)
+    if not is_mentioned and message.entities:
+        for ent in message.entities:
+            if ent.type == "mention":
+                mention_str = text[ent.offset : ent.offset + ent.length].lower()
+                if bot_username and mention_str == f"@{bot_username}":
+                    is_mentioned = True
+                    break
+            elif ent.type == "text_mention" and ent.user and ent.user.id == bot_user.id:
+                is_mentioned = True
+                break
+
+    # 3. Only treat as an automatic channel broadcast post if it is a pure automated system forward AND does NOT mention bot
     is_auto_broadcast = getattr(message, "is_automatic_forward", False) and not is_mentioned
 
     if is_auto_broadcast:
         # Cache this root post's text under its message_id (which is thread_id for all comments under it)
         channel_posts_cache[(chat_id, message.message_id)] = text
         logger.info(f"Cached channel broadcast post [{message.message_id}] in chat [{chat_id}]: {text[:60]}...")
-        return  # Do not reply to the channel post itself
+        return  # Do not reply to the automated channel broadcast itself
 
     # Ignore other bots
     if message.from_user and message.from_user.is_bot:
         return
 
-    is_group = chat.type in ("group", "supergroup")
+    is_group = chat.type in ("group", "supergroup", "channel")
 
     sender_desc = "Unknown"
     if message.from_user:
@@ -301,7 +365,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         sender_desc = f"Channel/Admin [{message.sender_chat.title or message.sender_chat.id}]"
 
     if is_group:
-        logger.info(f"Incoming group message in [{chat.title or chat_id}] from {sender_desc}: {text[:80]}")
+        logger.info(f"Incoming group/channel message in [{chat.title or chat_id}] from {sender_desc}: {text[:80]}")
 
     # In 1-on-1 private chat: ALWAYS respond
     if not is_group:
@@ -309,15 +373,12 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await send_solution(update, context, text, channel_context=channel_ctx, parent_comment_context=parent_ctx, is_nuke=False)
         return
 
-    # In Discussion Group:
-    # Strip bot mention from text if present
-    if is_mentioned:
-        text = re.sub(rf"@{re.escape(bot_username)}", "", text, flags=re.IGNORECASE).strip()
-
+    # In Discussion Group / Channel:
     # Check if user replied directly to one of the bot's past messages
     is_reply_to_bot = False
-    if message.reply_to_message and message.reply_to_message.from_user:
-        if message.reply_to_message.from_user.id == bot_user.id:
+    if message.reply_to_message:
+        parent = message.reply_to_message
+        if (parent.from_user and parent.from_user.id == bot_user.id) or (parent.sender_chat and parent.sender_chat.id == bot_user.id):
             is_reply_to_bot = True
 
     # If configuration says ONLY reply when mentioned or replied to
@@ -326,34 +387,40 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
     # If auto-replying to questions in discussion groups:
-    # Only reply if user explicitly mentioned bot, replied to bot, OR asked a troubleshooting question/complaint
     if not (is_mentioned or is_reply_to_bot):
         if not config.AUTO_REPLY_GROUP_QUESTIONS:
             return
         if not is_troubleshooting_query(text):
-            # Casual chatter ("haha stick with playing mate", "thanks", "nice") -> skip to prevent group spam
+            # Casual chatter -> skip to prevent group spam
             return
 
     # Extract original channel post context and parent comment context early
     channel_ctx, parent_ctx = extract_message_contexts(update)
 
-    # If user mentioned bot without text while replying to someone's question, use parent text as the query!
-    if is_mentioned and not text and parent_ctx:
-        text = parent_ctx
+    # Strip bot mention from text if present
+    cleaned_query = text
+    if is_mentioned:
+        cleaned_query = re.sub(rf"@{re.escape(bot_username)}", "", cleaned_query, flags=re.IGNORECASE).strip()
+        cleaned_query = re.sub(r"^[\s,:\-]+", "", cleaned_query).strip()
 
-    if is_mentioned and (not text or text.lower() in ("ping", "/ping", "test", "alive")):
+    # If user mentioned bot without question while replying to someone's question, use parent text as the query!
+    if is_mentioned and not cleaned_query and parent_ctx:
+        cleaned_query = parent_ctx
+
+    # If user just mentioned bot with nothing else or greetings
+    if is_mentioned and (not cleaned_query or cleaned_query.lower() in ("ping", "/ping", "test", "alive")):
         await ping_command(update, context)
         return
 
-    if is_mentioned and text.lower() in ("hi", "hello", "start", "/start", "help", "/help"):
+    if is_mentioned and cleaned_query.lower() in ("hi", "hello", "start", "/start", "help", "/help"):
         await start_command(update, context)
         return
 
-    logger.info(f"Troubleshooting trigger in group [{chat.title or chat_id}] under context: {channel_ctx[:40]} | Query: {text[:60]}")
+    logger.info(f"Troubleshooting trigger in [{chat.title or chat_id}] under context: {channel_ctx[:40]} | Query: {cleaned_query[:60]}")
     await send_solution(
         update,
         context,
-        text,
+        cleaned_query,
         channel_context=channel_ctx,
         parent_comment_context=parent_ctx,
         is_nuke=False
@@ -391,7 +458,7 @@ def main():
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("setkey", setkey_command))
 
-    # Catch all text and media captions (no ~filters.COMMAND dead zone)
+    # Catch all text and media captions (including channel posts)
     app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, text_message_handler))
 
     app.add_error_handler(error_handler)
