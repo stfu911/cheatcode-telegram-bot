@@ -325,7 +325,18 @@ def extract_message_contexts(update: Update) -> Tuple[str, str]:
     if not channel_context and thread_id and (chat_id, thread_id) in channel_posts_cache:
         channel_context = channel_posts_cache[(chat_id, thread_id)]
 
+    # 3. Fallback: Check pinned message in chat if channel_context still empty
+    chat = update.effective_chat
+    if not channel_context and chat and getattr(chat, "pinned_message", None):
+        pin = chat.pinned_message
+        pin_text = (pin.text or pin.caption or "").strip()
+        if pin_text:
+            channel_context = pin_text
+            if thread_id:
+                channel_posts_cache[(chat_id, thread_id)] = channel_context
+
     return channel_context, parent_comment_context
+
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
@@ -424,9 +435,23 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         cleaned_query = re.sub(rf"@?{re.escape(bot_username)}\b", "", cleaned_query, flags=re.IGNORECASE).strip()
         cleaned_query = re.sub(r"^[\s,:\-]+", "", cleaned_query).strip()
 
-    # If user mentioned bot without question while replying to someone's question, use parent text as the query!
-    if is_mentioned and not cleaned_query and parent_ctx:
-        cleaned_query = parent_ctx
+    # Directive patterns (e.g., "ans it", "ans", "tell me steps", "steps", "fix it", "help")
+    directive_pattern = r"^(ans(\s+it)?|answer(\s+it)?|solve(\s+it)?|fix(\s+it|\s+this)?|tell(\s+me)?(\s+steps)?|steps|check(\s+this)?|how(\s+to)?|what(\s+to\s+do)?|what\s+about\s+this|help|fix)$"
+    is_directive = bool(re.match(directive_pattern, cleaned_query.lower().strip()))
+
+    # Ground query: if user gave directive or very short text (<15 chars) while replying
+    if is_mentioned and (not cleaned_query or is_directive or len(cleaned_query) < 14):
+        # 1. Prefer parent comment if it has real substance (more than an emoji)
+        if parent_ctx and len(parent_ctx.strip()) > 2 and not re.match(r"^[\s\W_]+$", parent_ctx):
+            cleaned_query = f"{parent_ctx} (User directive: '{cleaned_query or 'solve this'}')"
+        # 2. Else fall back to channel post context (e.g. game title and APK/ROM info)
+        elif channel_ctx:
+            game_title = channel_ctx.splitlines()[0] if channel_ctx.splitlines() else "the game"
+            cleaned_query = f"How to install and set up {game_title} (APK + ROM/OBB) on mobile without errors"
+        # 3. Else if completely empty, ping status
+        elif not cleaned_query:
+            await ping_command(update, context)
+            return
 
     # If user just mentioned bot with nothing else or greetings
     if is_mentioned and (not cleaned_query or cleaned_query.lower() in ("ping", "/ping", "test", "alive")):
@@ -437,7 +462,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await start_command(update, context)
         return
 
-    logger.info(f"Troubleshooting trigger in [{chat.title or chat_id}] under context: {channel_ctx[:40]} | Query: {cleaned_query[:60]}")
+    logger.info(f"Troubleshooting trigger in [{chat.title or chat_id}] | Context: {channel_ctx[:35]} | Query: {cleaned_query[:60]}")
+
     await send_solution(
         update,
         context,
