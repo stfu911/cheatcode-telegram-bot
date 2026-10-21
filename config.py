@@ -48,7 +48,9 @@ def get_api_config():
 
     if provider == "groq":
         base_url = base_url or "https://api.groq.com/openai/v1"
-        model = model or "qwen/qwen3.8-27b"
+        if not model or model == "openai/gpt-oss-120b":
+            model = "qwen/qwen3.8-27b"
+
 
     elif provider == "gemini":
         # Google provides an OpenAI-compatible endpoint
