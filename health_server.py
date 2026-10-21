@@ -105,7 +105,10 @@ def create_webhook_handler(telegram_app):
             elif "sender_chat" in msg:
                 sender = f"Chat [{msg['sender_chat'].get('title')}]"
             TELEMETRY["last_sender"] = sender
-            TELEMETRY["last_update_type"] = list(raw_data.keys())[-1] if raw_data else "empty"
+            text_snippet = (msg.get("text") or msg.get("caption") or "")[:80]
+            log_line = f"[{TELEMETRY['last_update_time']}] WEBHOOK UPDATE #{TELEMETRY['updates_received']} from {sender}: {text_snippet}"
+            LOG_BUFFER.append(log_line)
+            logger.info(log_line)
 
             update = Update.de_json(raw_data, telegram_app.bot)
             if update:
@@ -114,7 +117,9 @@ def create_webhook_handler(telegram_app):
             
             return web.Response(text="OK")
         except Exception as e:
-            logger.error(f"Error handling Telegram webhook payload: {e}")
+            err_line = f"Error handling Telegram webhook payload: {e}"
+            logger.error(err_line)
+            LOG_BUFFER.append(err_line)
             TELEMETRY["last_error"] = str(e)
             return web.Response(text="ERROR", status=500)
 

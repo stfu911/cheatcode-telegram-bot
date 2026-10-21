@@ -61,9 +61,10 @@ CONVERSATIONAL_NOISE = {
 def is_user_authorized(user_id: int, sender_chat=None) -> bool:
     if not config.ALLOWED_USERS:
         return True
-    if sender_chat is not None:
+    if sender_chat is not None or user_id in (0, 1087968824, 777000):
         return True
     return user_id in config.ALLOWED_USERS
+
 
 def is_troubleshooting_query(text: str) -> bool:
     """Check if message in discussion group looks like an actual technical issue."""
@@ -365,20 +366,30 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.info(f"Cached channel broadcast post [{message.message_id}] in chat [{chat_id}]: {text[:60]}...")
         return  # Do not reply to the automated channel broadcast itself
 
-    # Ignore other bots
+    # Ignore third-party bots (NEVER ignore GroupAnonymousBot ID 1087968824 or Telegram service ID 777000)
     if message.from_user and message.from_user.is_bot:
-        return
+        is_anonymous_admin = (
+            message.from_user.id in (1087968824, 777000) or
+            message.from_user.username == "GroupAnonymousBot" or
+            getattr(message, "sender_chat", None) is not None
+        )
+        if not is_anonymous_admin:
+            return
 
     is_group = chat.type in ("group", "supergroup", "channel")
 
     sender_desc = "Unknown"
-    if message.from_user:
-        sender_desc = f"@{message.from_user.username or message.from_user.first_name}"
-    elif message.sender_chat:
-        sender_desc = f"Channel/Admin [{message.sender_chat.title or message.sender_chat.id}]"
+    if getattr(message, "sender_chat", None):
+        sender_desc = f"Anonymous Admin / Channel [{message.sender_chat.title or message.sender_chat.id}]"
+    elif message.from_user:
+        if message.from_user.id == 1087968824 or message.from_user.username == "GroupAnonymousBot":
+            sender_desc = f"Anonymous Admin ({chat.title or chat_id})"
+        else:
+            sender_desc = f"@{message.from_user.username or message.from_user.first_name}"
 
     if is_group:
         logger.info(f"Incoming group/channel message in [{chat.title or chat_id}] from {sender_desc} (Mentioned: {is_mentioned}): {text[:80]}")
+
 
     # In 1-on-1 private chat: ALWAYS respond
     if not is_group:
