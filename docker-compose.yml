@@ -1,0 +1,14 @@
+services:
+  cheatcode-bot:
+    build: .
+    container_name: cheatcode-telegram-bot
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

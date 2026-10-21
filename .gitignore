@@ -1,0 +1,18 @@
+# Environment Variables & Secrets
+.env
+.env.local
+
+# Python Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Antigravity artifacts
+.system_generated/
