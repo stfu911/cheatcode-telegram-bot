@@ -33,19 +33,25 @@ logger = logging.getLogger("CheatCodeBot")
 # Cache channel posts in memory: (chat_id, message_thread_id / root_post_id) -> post text/caption
 channel_posts_cache: Dict[Tuple[int, int], str] = {}
 
-# Troubleshooting keyword patterns for auto-detecting member complaints in discussion groups
+# Strict troubleshooting keyword patterns (no bare question marks)
 TROUBLESHOOT_KEYWORDS = (
-    r"\?|"
-    r"\b(crash|crashing|crashes|freeze|freezes|hang|hangs|stuck|error|failed|fails|black screen)\b|"
+    r"\b(crash|crashing|crashes|freeze|freezes|hang|hangs|stuck|black screen)\b|"
     r"\b(not working|doesnt work|doesn't work|wont work|won't work|cant open|can't open|wont open|won't open)\b|"
-    r"\b(how to|how do|where to|help|fix|bypass|solution|solve|patch)\b|"
-    r"\b(apk|apks|obb|rom|iso|pkg|fpkg|zip|rar|download|install|installing|extract|sai|split)\b|"
-    r"\b(lag|lagging|fps|stutter|drop|performance|slow|overheat)\b|"
-    r"\b(sd 855|sd855|snapdragon|adreno|mali|exynos|dimensity|ram|specs|support)\b|"
-    r"\b(driver|turnip|vulkan|dxvk|opengl|glitch|graphics|texture|corrupted)\b|"
-    r"\b(license|verification|google play|auth|password|key)\b"
+    r"\b(how to install|where to put|how to fix|how to bypass|how to run)\b|"
+    r"\b(apk|apks|obb|rom|iso|pkg|fpkg|zip|extract|sai|split)\b|"
+    r"\b(lag|lagging|fps|stutter|drop fps|overheat)\b|"
+    r"\b(sd 855|sd855|snapdragon|adreno|mali|exynos|dimensity)\b|"
+    r"\b(turnip driver|vulkan|dxvk|opengl error)\b|"
+    r"\b(license verification|google play error)\b"
 )
 troubleshoot_regex = re.compile(TROUBLESHOOT_KEYWORDS, re.IGNORECASE)
+
+# Short conversational phrases that must NEVER trigger the bot
+CONVERSATIONAL_NOISE = {
+    "got it", "got it?", "ok", "ok?", "okay", "okay?", "why", "why?",
+    "what", "what?", "how", "how?", "who", "who?", "where", "where?",
+    "you there?", "thanks", "thank you", "nice", "lol", "lmao", "yes", "no"
+}
 
 def is_user_authorized(user_id: int) -> bool:
     if not config.ALLOWED_USERS:
@@ -53,10 +59,13 @@ def is_user_authorized(user_id: int) -> bool:
     return user_id in config.ALLOWED_USERS
 
 def is_troubleshooting_query(text: str) -> bool:
-    """Check if message in discussion group looks like an issue or complaint."""
-    if not text or len(text.strip()) < 3:
+    """Check if message in discussion group looks like an actual technical issue."""
+    cleaned = text.strip().lower()
+    if len(cleaned) < 12:
         return False
-    return bool(troubleshoot_regex.search(text))
+    if cleaned in CONVERSATIONAL_NOISE:
+        return False
+    return bool(troubleshoot_regex.search(cleaned))
 
 async def send_solution(
     update: Update,
