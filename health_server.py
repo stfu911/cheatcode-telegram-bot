@@ -38,7 +38,16 @@ class InMemoryLogHandler(logging.Handler):
 # Install buffer handler onto root logger
 _buf_handler = InMemoryLogHandler()
 _buf_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-logging.getLogger().addHandler(_buf_handler)
+
+def attach_log_capture(target_logger=None):
+    """Attach memory buffer handler to target logger and root logger."""
+    _buf_handler.setLevel(logging.INFO)
+    if target_logger:
+        target_logger.addHandler(_buf_handler)
+    logging.getLogger().addHandler(_buf_handler)
+
+attach_log_capture()
+
 
 # Global telemetry state
 START_TIME = time.time()

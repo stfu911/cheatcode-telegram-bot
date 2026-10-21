@@ -19,7 +19,7 @@ from telegram.ext import (
 import config
 from ai_client import ai_client
 from formatter import markdown_to_telegram_html
-from health_server import start_health_server
+from health_server import start_health_server, attach_log_capture
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -32,6 +32,8 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("CheatCodeBot")
+attach_log_capture(logger)
+
 
 # Cache channel posts in memory: (chat_id, message_thread_id / root_post_id) -> post text/caption
 channel_posts_cache: Dict[Tuple[int, int], str] = {}
