@@ -1,9 +1,12 @@
 """Cheat Code Telegram Bot - Tactical direct-bypass troubleshooting bot for DMs and Discussion Groups."""
 import asyncio
 import logging
+import os
 import re
+import signal
 import sys
 from typing import Dict, Tuple
+
 from telegram import Update, constants
 from telegram.ext import (
     ApplicationBuilder,
@@ -33,7 +36,7 @@ logger = logging.getLogger("CheatCodeBot")
 # Cache channel posts in memory: (chat_id, message_thread_id / root_post_id) -> post text/caption
 channel_posts_cache: Dict[Tuple[int, int], str] = {}
 
-# Strict troubleshooting keyword patterns (no bare question marks)
+# Strict troubleshooting keyword patterns
 TROUBLESHOOT_KEYWORDS = (
     r"\b(crash|crashing|crashes|freeze|freezes|hang|hangs|stuck|black screen)\b|"
     r"\b(not working|doesnt work|doesn't work|wont work|won't work|cant open|can't open|wont open|won't open)\b|"
@@ -53,8 +56,10 @@ CONVERSATIONAL_NOISE = {
     "you there?", "thanks", "thank you", "nice", "lol", "lmao", "yes", "no"
 }
 
-def is_user_authorized(user_id: int) -> bool:
+def is_user_authorized(user_id: int, sender_chat=None) -> bool:
     if not config.ALLOWED_USERS:
+        return True
+    if sender_chat is not None:
         return True
     return user_id in config.ALLOWED_USERS
 
@@ -84,8 +89,9 @@ async def send_solution(
     chat_id = chat.id
     thread_id = getattr(message, "message_thread_id", None)
     user = update.effective_user
+    sender_chat = getattr(message, "sender_chat", None)
 
-    if not is_user_authorized(user.id if user else 0):
+    if not is_user_authorized(user.id if user else 0, sender_chat=sender_chat):
         try:
             await message.reply_text("⛔ Unauthorized access. Bot is in private whitelist mode.")
         except Exception:
@@ -142,7 +148,7 @@ async def send_solution(
 
     formatted_html = markdown_to_telegram_html(raw_solution)
 
-    # Safe reply with automatic thread fallback
+    # Safe reply with automatic thread and plain-text fallback
     try:
         await message.reply_text(
             formatted_html,
@@ -159,7 +165,8 @@ async def send_solution(
                 parse_mode=constants.ParseMode.HTML,
                 disable_web_page_preview=True
             )
-        except Exception:
+        except Exception as e2:
+            logger.warning(f"send_message with HTML failed ({e2}), falling back to plain text")
             await context.bot.send_message(
                 chat_id=chat_id,
                 message_thread_id=thread_id,
@@ -217,7 +224,7 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     thread_id = getattr(message, "message_thread_id", None)
 
-    if not is_user_authorized(update.effective_user.id if update.effective_user else 0):
+    if not is_user_authorized(update.effective_user.id if update.effective_user else 0, sender_chat=getattr(message, "sender_chat", None)):
         await message.reply_text("⛔ Unauthorized.")
         return
 
@@ -304,6 +311,9 @@ def extract_message_contexts(update: Update) -> Tuple[str, str]:
 
         if is_parent_channel:
             channel_context = parent_text
+            thread_id = getattr(message, "message_thread_id", None)
+            if thread_id:
+                channel_posts_cache[(chat_id, thread_id)] = channel_context
         else:
             parent_comment_context = parent_text
 
@@ -326,17 +336,18 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     text = (message.text or message.caption or "").strip()
 
     bot_user = context.bot
-    bot_username = (bot_user.username or "").lower()
+    bot_username = (bot_user.username or "Stfu0911_bot").lower()
 
-    # 1. String mention check
-    is_mentioned = bool(bot_username and f"@{bot_username}" in text.lower())
+    # 1. Regex text mention check (matches @Stfu0911_bot, Stfu0911_bot, @Stfu0911_bot:, etc.)
+    is_mentioned = bool(re.search(rf"@?{re.escape(bot_username)}\b", text, re.IGNORECASE))
 
-    # 2. Telegram entities mention check (handles clickable mentions)
-    if not is_mentioned and message.entities:
-        for ent in message.entities:
+    # 2. Telegram entities (both message.entities and message.caption_entities)
+    all_entities = list(message.entities or []) + list(message.caption_entities or [])
+    if not is_mentioned and all_entities:
+        for ent in all_entities:
             if ent.type == "mention":
-                mention_str = text[ent.offset : ent.offset + ent.length].lower()
-                if bot_username and mention_str == f"@{bot_username}":
+                mention_str = text[ent.offset : ent.offset + ent.length].lower().lstrip("@")
+                if mention_str == bot_username:
                     is_mentioned = True
                     break
             elif ent.type == "text_mention" and ent.user and ent.user.id == bot_user.id:
@@ -365,7 +376,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         sender_desc = f"Channel/Admin [{message.sender_chat.title or message.sender_chat.id}]"
 
     if is_group:
-        logger.info(f"Incoming group/channel message in [{chat.title or chat_id}] from {sender_desc}: {text[:80]}")
+        logger.info(f"Incoming group/channel message in [{chat.title or chat_id}] from {sender_desc} (Mentioned: {is_mentioned}): {text[:80]}")
 
     # In 1-on-1 private chat: ALWAYS respond
     if not is_group:
@@ -381,13 +392,10 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         if (parent.from_user and parent.from_user.id == bot_user.id) or (parent.sender_chat and parent.sender_chat.id == bot_user.id):
             is_reply_to_bot = True
 
-    # If configuration says ONLY reply when mentioned or replied to
-    if config.REPLY_ONLY_WHEN_MENTIONED:
-        if not (is_mentioned or is_reply_to_bot):
-            return
-
-    # If auto-replying to questions in discussion groups:
+    # If not mentioned and not reply to bot:
     if not (is_mentioned or is_reply_to_bot):
+        if config.REPLY_ONLY_WHEN_MENTIONED:
+            return
         if not config.AUTO_REPLY_GROUP_QUESTIONS:
             return
         if not is_troubleshooting_query(text):
@@ -400,7 +408,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # Strip bot mention from text if present
     cleaned_query = text
     if is_mentioned:
-        cleaned_query = re.sub(rf"@{re.escape(bot_username)}", "", cleaned_query, flags=re.IGNORECASE).strip()
+        cleaned_query = re.sub(rf"@?{re.escape(bot_username)}\b", "", cleaned_query, flags=re.IGNORECASE).strip()
         cleaned_query = re.sub(r"^[\s,:\-]+", "", cleaned_query).strip()
 
     # If user mentioned bot without question while replying to someone's question, use parent text as the query!
@@ -430,23 +438,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Global error handler to prevent bot crash."""
     logger.error(f"Telegram Exception encountered: {context.error}")
 
-async def post_init(application):
-    """Background startup hooks."""
-    await start_health_server()
-    me = await application.bot.get_me()
-    logger.info(f"Cheat Code Bot @{me.username} successfully initialized and monitoring discussion groups.")
-
-def main():
+async def run_bot():
     token = config.TELEGRAM_BOT_TOKEN
     if not token or token == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
         logger.error("FATAL: TELEGRAM_BOT_TOKEN is not set in .env! Please configure your token.")
-        print("\n[!] FATAL: TELEGRAM_BOT_TOKEN is missing in .env")
-        print("    1. Open .env")
-        print("    2. Set TELEGRAM_BOT_TOKEN=your_token_from_botfather")
-        print("    3. Restart bot\n")
         sys.exit(1)
 
-    app = ApplicationBuilder().token(token).post_init(post_init).build()
+    app = ApplicationBuilder().token(token).build()
 
     # Handlers
     app.add_handler(CommandHandler("start", start_command))
@@ -460,11 +458,86 @@ def main():
 
     # Catch all text and media captions (including channel posts)
     app.add_handler(MessageHandler(filters.TEXT | filters.CAPTION, text_message_handler))
-
     app.add_error_handler(error_handler)
 
-    logger.info(f"Starting long-polling with AI Model [{config.AI_MODEL}] on [{config.AI_PROVIDER}]...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Initialize and start PTB Application
+    await app.initialize()
+    await app.start()
+    me = await app.bot.get_me()
+    logger.info(f"Cheat Code Bot @{me.username} (ID: {me.id}) fully initialized.")
+
+    base_url = os.getenv(
+        "RENDER_EXTERNAL_URL",
+        os.getenv("WEBHOOK_BASE_URL", "https://cheatcode-telegram-bot.onrender.com")
+    ).rstrip("/")
+
+    # Detect if we should run in Webhook mode (Render cloud environment)
+    is_render = bool(os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL") or os.getenv("PORT"))
+
+    if is_render:
+        webhook_url = f"{base_url}/webhook"
+        logger.info(f"Deploying in Telegram Webhook Mode for Render: {webhook_url}")
+        try:
+            await app.bot.set_webhook(
+                url=webhook_url,
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=False
+            )
+            logger.info(f"Telegram Webhook successfully set to: {webhook_url}")
+        except Exception as e:
+            logger.error(f"Failed to set Telegram webhook: {e}")
+
+        runner = await start_health_server(telegram_app=app, webhook_mode=True, webhook_url=webhook_url)
+
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None)):
+            if sig is not None:
+                try:
+                    loop.add_signal_handler(sig, stop_event.set)
+                except NotImplementedError:
+                    pass
+
+        try:
+            await stop_event.wait()
+        finally:
+            logger.info("Shutting down Webhook server...")
+            if runner:
+                await runner.cleanup()
+            await app.stop()
+            await app.shutdown()
+    else:
+        # Long-polling mode for local development
+        logger.info("Deploying in Long-Polling Mode (Local Dev)...")
+        try:
+            await app.bot.delete_webhook(drop_pending_updates=False)
+        except Exception:
+            pass
+
+        runner = await start_health_server(telegram_app=app, webhook_mode=False)
+
+        async with app:
+            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+            stop_event = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None)):
+                if sig is not None:
+                    try:
+                        loop.add_signal_handler(sig, stop_event.set)
+                    except NotImplementedError:
+                        pass
+            try:
+                await stop_event.wait()
+            finally:
+                logger.info("Stopping polling...")
+                if runner:
+                    await runner.cleanup()
+
+def main():
+    try:
+        asyncio.run(run_bot())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Cheat Code Bot process terminated.")
 
 if __name__ == "__main__":
     main()

@@ -81,5 +81,7 @@ PORT = int(os.getenv("PORT", os.getenv("WEB_PORT", "8080")))
 ENABLE_HEALTH_SERVER = os.getenv("ENABLE_HEALTH_SERVER", "true").lower() in ("true", "1", "yes")
 
 # Group Discussion & Auto-Context Settings
-AUTO_REPLY_GROUP_QUESTIONS = os.getenv("AUTO_REPLY_GROUP_QUESTIONS", "false").lower() in ("true", "1", "yes")
-REPLY_ONLY_WHEN_MENTIONED = os.getenv("REPLY_ONLY_WHEN_MENTIONED", "true").lower() in ("true", "1", "yes")
+AUTO_REPLY_GROUP_QUESTIONS = os.getenv("AUTO_REPLY_GROUP_QUESTIONS", "true").lower() in ("true", "1", "yes")
+REPLY_ONLY_WHEN_MENTIONED = os.getenv("REPLY_ONLY_WHEN_MENTIONED", "false").lower() in ("true", "1", "yes")
+USE_WEBHOOK = os.getenv("USE_WEBHOOK", "true").lower() in ("true", "1", "yes")
+
