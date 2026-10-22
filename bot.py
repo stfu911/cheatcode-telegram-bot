@@ -103,12 +103,7 @@ async def send_solution(
 
     if not query.strip():
         fallback_msg = (
-            "⚡ <b>THE CHEAT CODE:</b>\n"
-            "<code>/cheat &lt;your problem or error message&gt;</code>\n\n"
-            "🔍 <b>THE MECHANIC:</b>\n"
-            "Command needs an issue to generate a bypass.\n\n"
-            "💣 <b>THE OVERRIDE (Plan B):</b>\n"
-            "Send any error text or tag @Stfu0911_bot with your question."
+            "Drop your game title, error, or crash with your device specs (phone + RAM) and I\'ll drop the fix."
         )
         try:
             await message.reply_text(fallback_msg, parse_mode=constants.ParseMode.HTML)
@@ -186,16 +181,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thread_id = getattr(message, "message_thread_id", None)
 
     msg = (
-        "⚡ <b>CHEAT CODE BOT READY.</b>\n\n"
-        "Direct-bypass systems engineer. Zero filler. Pure terminal one-liners, registry tweaks, APK/ROM fixes, and root bypasses.\n\n"
-        "<b>USAGE:</b>\n"
-        "• Send any error or glitch in DMs or discussion group comments\n"
-        "• Tag <code>@Stfu0911_bot</code> or reply to any message\n"
-        "• <code>/cheat &lt;issue&gt;</code> — Quick 80/20 bypass\n"
-        "• <code>/nuke &lt;issue&gt;</code> — Aggressive nuclear override\n"
-        "• <code>/fix &lt;issue&gt;</code> — Immediate tactical repair\n"
-        "• <code>/ping</code> — Status check\n\n"
-        "<i>Tap any command block on mobile to copy directly to clipboard.</i>"
+        "⚡ <b>GAME FIXER BOT READY.</b>\n\n"
+        "Direct gaming & modding solver. Zero fluff.\n"
+        "Drop your error, crash, or game question with your phone model/specs to get the final fix immediately."
     )
     try:
         await message.reply_text(msg, parse_mode=constants.ParseMode.HTML)
